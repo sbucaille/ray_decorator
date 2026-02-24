@@ -9,8 +9,18 @@ import tempfile
 from importlib import metadata
 from typing import Any, Callable
 
-import ray
-from ray.runtime_env import RuntimeEnv
+def is_ray_available() -> bool:
+    """Checks if the 'ray' package is installed."""
+    try:
+        import ray  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def is_aws_available() -> bool:
+    """Checks if the 'aws' CLI is available in the system PATH."""
+    return shutil.which("aws") is not None
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -79,6 +89,11 @@ def s3_sync(src: str, dst: str):
         if not src.startswith("s3://") and not os.path.exists(src):
             return
 
+        if not is_aws_available():
+            raise ValueError(
+                "The 'aws' CLI is required for S3 synchronization. "
+                "Please install it and ensure it is in your PATH."
+            )
         cmd = ["aws", "s3", "sync" if is_dir else "cp", src, dst]
         if not is_dir and not dst.startswith("s3://"):
             os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
@@ -226,8 +241,17 @@ def ray_decorator(
     """
 
     def decorator(func: Callable) -> Callable:
+        if not is_ray_available():
+            raise ValueError(
+                "The 'ray' package is required to use @ray_decorator. "
+                "Please install it with 'pip install ray'."
+            )
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
+            import ray
+            from ray.runtime_env import RuntimeEnv
+
             # Resolve all arguments
             sig = inspect.signature(func)
             bound = sig.bind(*args, **kwargs)
