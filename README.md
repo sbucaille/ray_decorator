@@ -1,12 +1,12 @@
 # Ray Decorator
 
-`ray-decorator` is a powerful Python library designed to seamlessly offload function execution and configuration-driven tasks to a Ray cluster. It specializes in handling environment parity between local and remote environments by intelligently mapping local file paths to S3 URIs, performing deduplication via MD5 hashing, and ensuring all dependencies are available on the worker node.
+`ray-decorator` is a library to offload function execution and configuration-driven tasks to a Ray cluster. It handles environment parity between local and remote environments by mapping local file paths to S3 URIs, performing deduplication via MD5 hashing, and ensuring dependencies are available on the worker node.
 
 ## Why this tool?
 
-This tool was created to solve a common friction point when using **Ray** and **DVC** together in a unified pipeline.
+This tool was created to address friction when using **Ray** and **DVC** together in a unified pipeline.
 
-In many ML workflows, you want to use **DVC** to keep your local workspace up-to-date with data and parameters. However, training often requires a remote Ray cluster with powerful GPUs. Balancing these two usually leads to "ugly" staging commands in your Ray job submission, such as:
+In ML workflows, **DVC** is used to keep a local workspace up-to-date with data and parameters. However, training often requires a remote Ray cluster with GPUs. Balancing these two usually leads to complex staging commands in Ray job submissions, such as:
 
 ```bash
 /bin/bash -c 'uv run dvc pull data/processed_dataset && \
@@ -16,24 +16,24 @@ uv run dvc push && \
 aws s3 cp model/trained_model.dvc s3://my-bucket/models/'
 ```
 
-This approach is brittle and hard to maintain. Since DVC tracking of remote files (non-local to the workspace) has been deprecated or is discouraged, you ideally want your dependencies and outputs to remain **local** from the perspective of your DVC pipeline.
+Since DVC tracking of remote files (non-local to the workspace) is discouraged, it is preferable for dependencies and outputs to remain **local** from the perspective of the DVC pipeline.
 
-`ray-decorator` solves this by:
-1.  **Transparently** copying local dependencies to S3.
-2.  Syncing them to the remote Ray worker so your function runs exactly as it would locally.
-3.  Uploading the results back to S3 and then **downloading them to your local machine**.
+`ray-decorator` handles this by:
+1.  Copying local dependencies to S3.
+2.  Syncing them to the remote Ray worker so the function runs on the Ray remote worker.
+3.  Uploading the results back to S3 and then downloading them to the local machine.
 
-Furthermore, it bypasses **Ray's `working_dir` size limits**. If you were to include massive datasets (e.g., 50GB of images) in your Ray `runtime_env`, Ray would complain (or fail) due to the overhead of distributing such a large directory. `ray-decorator` handles these as separate `deps`, syncing them directly to S3 and then to the worker, keeping your `working_dir` lean and fast.
+Furthermore, it bypasses **Ray's `working_dir` size limits**. Including large datasets (e.g., 50GB of images) in a Ray `runtime_env` can lead to distribution overhead or failures. `ray-decorator` handles these as separate `deps`, syncing them directly to S3 and then to the worker, keeping the `working_dir` small.
 
-The result? **DVC can continue to track local dependencies and outputs** while the heavy lifting happens on the Ray cluster, without any manual S3 boilerplate in your scripts.
+The result is that **DVC can continue to track local dependencies and outputs** while the heavy lifting happens on the Ray cluster, without manual S3 management in scripts.
 
 ## Features
 
-- **Distributed Execution**: Offload heavy computations (like ML training or data processing) to a Ray cluster with a simple decorator.
-- **S3 Path Mapping**: Automatically detects local file paths in arguments, uploads them to S3 (transparently), and maps them back to local paths on the Ray worker.
-- **MD5 Deduplication**: Avoids redundant uploads/downloads by checking MD5 hashes of files and directories.
-- **Hydra & Hydra-Zen Integration**: Built-in support for Hydra configurations and first-class integration with `hydra-zen` via the `RayZen` wrapper.
-- **Environment Parity**: Automatically synchronizes local `uv` package distributions to the Ray cluster’s runtime environment.
+- **Distributed Execution**: Offload computations to a Ray cluster with a decorator.
+- **S3 Path Mapping**: Detects local file paths in arguments, uploads them to S3, and maps them back to local paths on the Ray worker.
+- **MD5 Deduplication**: Avoids redundant uploads/downloads by checking MD5 hashes.
+- **Hydra & Hydra-Zen Integration**: Support for Hydra configurations and integration with `hydra-zen` via the `RayZen` wrapper.
+- **Environment Parity**: Synchronizes local `uv` package distributions to the Ray cluster’s runtime environment.
 
 ## Installation
 
