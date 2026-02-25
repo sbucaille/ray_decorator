@@ -27,7 +27,6 @@ def _worker_process_inputs(
             location="local",
             is_dir=remote_path_data.is_dir,
         )
-        print(local_path_data)
         logger.info(
             f"[Worker] Mapping input: {remote_path_data.path} -> {local_path_data.path}"
         )
