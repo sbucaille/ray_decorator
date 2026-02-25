@@ -1,6 +1,6 @@
 [project]
 name = "ray-decorator"
-version = "0.1.5"
+version = "0.1.6"
 description = "Decorator to run functions on Ray cluster with S3 mapping between local and remote workers paths"
 readme = "README.md"
 authors = [
