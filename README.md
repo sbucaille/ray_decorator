@@ -23,6 +23,8 @@ This approach is brittle and hard to maintain. Since DVC tracking of remote file
 2.  Syncing them to the remote Ray worker so your function runs exactly as it would locally.
 3.  Uploading the results back to S3 and then **downloading them to your local machine**.
 
+Furthermore, it bypasses **Ray's `working_dir` size limits**. If you were to include massive datasets (e.g., 50GB of images) in your Ray `runtime_env`, Ray would complain (or fail) due to the overhead of distributing such a large directory. `ray-decorator` handles these as separate `deps`, syncing them directly to S3 and then to the worker, keeping your `working_dir` lean and fast.
+
 The result? **DVC can continue to track local dependencies and outputs** while the heavy lifting happens on the Ray cluster, without any manual S3 boilerplate in your scripts.
 
 ## Features
