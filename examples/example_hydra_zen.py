@@ -8,20 +8,26 @@ from transformers import AutoModel, PreTrainedModel
 
 @store(
     name="main",
-    data_module={"data_dir": "./examples/data"},
+    data_module={"data_dir": "./examples/data_dir"},
     model=builds(
         AutoModel.from_pretrained,
         pretrained_model_name_or_path="bert-base-uncased",
         device_map="auto",
     ),
     output_dir="./examples/outputs",
+    output_json_path="./examples/output_data.json",
 )
-def main(data_module: Dict[str, Any], model: PreTrainedModel, output_dir: str) -> None:
+def main(
+    data_module: Dict[str, Any],
+    model: PreTrainedModel,
+    output_dir: str,
+    output_json_path: str,
+) -> None:
     print(data_module)
     model.save_pretrained(output_dir)
     print(model.device)
     os.makedirs(output_dir, exist_ok=True)
-    with open(os.path.join(output_dir, "data.json"), "w") as f:
+    with open(output_json_path, "w") as f:
         json.dump(data_module, f)
 
 
@@ -33,14 +39,14 @@ if __name__ == "__main__":
     ray_zen(
         main,
         deps=["data_module.data_dir"],
-        outs=["output_dir"],
+        outs=["output_dir", "output_json_path"],
         ray_address="auto",
         s3_base_path="s3://lassonde",
         ray_init_kwargs={
             "runtime_env": {
                 "working_dir": os.getcwd(),
-                "py_modules": ["./src"],
+                "py_modules": ["./src/ray_decorator"],
             }
         },
-        ray_remote_kwargs={"resources": {"a4000": 1}},
+        ray_remote_kwargs={"resources": {"a4000": 1}, "num_gpus": 1},
     ).hydra_main(config_name="main", config_path=None, version_base=None)

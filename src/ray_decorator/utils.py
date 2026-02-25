@@ -5,12 +5,27 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PathData:
+    path: str
+    location: Literal["local", "s3"]
+    is_dir: bool | None = None
+    hash: str | None = None
+
+
+@dataclass
+class PathMatch:
+    local: PathData
+    remote: PathData
 
 
 def is_ray_available() -> bool:
@@ -84,12 +99,30 @@ def calculate_path_hash(path: str) -> str:
     return hash_md5.hexdigest()
 
 
-def s3_sync(src: str, dst: str):
+def get_s3_base_path(s3_base_path: str, deps: list[str], container: Any) -> str:
+    combined_hash = hashlib.md5()
+    for dep_key in deps:
+        try:
+            val = get_nested_value(container, dep_key)
+            if val:
+                combined_hash.update(calculate_path_hash(str(val)).encode())
+        except (KeyError, AttributeError):
+            continue
+
+    run_id = combined_hash.hexdigest()
+    s3_base = f"{s3_base_path.rstrip('/')}/{run_id}"
+    logger.info(f"[Driver] Using stable Run ID: {run_id}")
+    return s3_base
+
+
+def s3_sync(src: PathData, dst: PathData):
     """Syncs from src to dst (local or S3). Skips unchanged files."""
-    if src.startswith("s3://") or dst.startswith("s3://"):
-        # If it's a directory
-        is_dir = os.path.isdir(src) if not src.startswith("s3://") else True
-        if not src.startswith("s3://") and not os.path.exists(src):
+    if src.location == "s3" or dst.location == "s3":
+        # Determine if it's a directory
+        # For local paths, use os.path.isdir
+        # For S3 paths, we rely on the given is_dir flag
+
+        if not src.path.startswith("s3://") and not os.path.exists(src.path):
             return
 
         if not is_aws_available():
@@ -97,21 +130,29 @@ def s3_sync(src: str, dst: str):
                 "The 'aws' CLI is required for S3 synchronization. "
                 "Please install it and ensure it is in your PATH."
             )
-        cmd = ["aws", "s3", "sync" if is_dir else "cp", src, dst]
-        if not is_dir and not dst.startswith("s3://"):
-            os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
+        source_path = src.path
+        destination_path = dst.path
 
+        cmd = [
+            "aws",
+            "s3",
+            "cp" if not src.is_dir else "sync",
+            source_path,
+            destination_path,
+        ]
+        logger.info(f"[S3 Sync] Syncing '{source_path}' to '{destination_path}'...")
         subprocess.run(cmd, check=True, capture_output=True)
     else:
-        if not os.path.exists(src):
+        if not os.path.exists(src.path):
             return
-        if os.path.isdir(src):
-            if os.path.exists(dst):
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
-        else:
-            os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
-            shutil.copy2(src, dst)
+        if os.path.isdir(src.path):
+            if os.path.exists(dst.path):
+                shutil.rmtree(dst.path)
+            shutil.copytree(src.path, dst.path)
+        if not src.is_dir and not dst.path.startswith("s3://"):
+            dest_dir = os.path.dirname(os.path.abspath(dst.path))
+            if dest_dir:
+                os.makedirs(dest_dir, exist_ok=True)
 
 
 def get_s3_hash(s3_uri: str) -> str:
@@ -141,7 +182,8 @@ def upload_hash(s3_uri: str, hash_val: str):
         f.write(hash_val)
         hash_tmp = f.name
     try:
-        s3_sync(hash_tmp, hash_s3)
+        cmd = ["aws", "s3", "cp", hash_tmp, hash_s3]
+        subprocess.run(cmd, check=True, capture_output=True)
     finally:
         if os.path.exists(hash_tmp):
             os.remove(hash_tmp)

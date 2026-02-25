@@ -14,7 +14,10 @@ from ray_decorator import ray_decorator
     ray_address="auto",
     s3_base_path="s3://lassonde",
     ray_init_kwargs={
-        "runtime_env": {"working_dir": os.getcwd(), "py_modules": ["./src"]}
+        "runtime_env": {
+            "working_dir": os.getcwd(),
+            "py_modules": ["./src/ray_decorator"],
+        }
     },
     ray_remote_kwargs={"num_cpus": 2},
 )

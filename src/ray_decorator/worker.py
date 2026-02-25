@@ -1,9 +1,10 @@
 import os
-from typing import Any, Callable
+from typing import Any, Callable, Dict
 
 from .utils import (
+    PathData,
+    PathMatch,
     calculate_path_hash,
-    get_nested_value,
     get_s3_hash,
     logger,
     s3_sync,
@@ -12,91 +13,109 @@ from .utils import (
 )
 
 
-def _worker_process_inputs(container: Any, deps: list[str]):
+def _worker_process_inputs(
+    container: Any, deps: list[str], dep_path_matches: Dict[str, PathMatch]
+):
     worker_run_dir = os.getcwd()
     for dep_key in deps:
-        try:
-            s3_uri = get_nested_value(container, dep_key)
-            if not isinstance(s3_uri, str) or not s3_uri.startswith("s3://"):
-                continue
-        except (KeyError, AttributeError):
-            continue
+        remote_path_data = dep_path_matches[dep_key].remote
 
-        basename = os.path.basename(s3_uri.rstrip("/"))
+        basename = os.path.basename(remote_path_data.path.rstrip("/"))
         local_worker_path = os.path.join(worker_run_dir, "deps", basename)
+        local_path_data = PathData(
+            path=local_worker_path,
+            location="local",
+            is_dir=remote_path_data.is_dir,
+        )
+        print(local_path_data)
+        logger.info(
+            f"[Worker] Mapping input: {remote_path_data.path} -> {local_path_data.path}"
+        )
+        remote_path_data.hash = get_s3_hash(remote_path_data.path)
+        local_path_data.hash = calculate_path_hash(local_path_data.path)
 
-        logger.info(f"[Worker] Mapping input: {s3_uri} -> {local_worker_path}")
-
-        remote_hash = get_s3_hash(s3_uri)
-        local_hash = calculate_path_hash(local_worker_path)
-
-        if remote_hash and remote_hash == local_hash:
+        if remote_path_data.hash and remote_path_data.hash == local_path_data.hash:
             logger.info(
                 f"[Worker] Input '{dep_key}' matches remote hash. Skipping download."
             )
         else:
             logger.info(f"[Worker] Syncing input '{dep_key}' from S3...")
-            s3_sync(s3_uri, local_worker_path)
+            s3_sync(remote_path_data, local_path_data)
 
-        set_nested_value(container, dep_key, local_worker_path)
+        set_nested_value(container, dep_key, local_path_data.path)
 
 
-def _worker_process_outputs(container: Any, outs: list[str]) -> dict:
+def _worker_process_outputs(
+    container: Any, outs: list[str], out_path_matches: Dict[str, PathMatch]
+) -> Dict[str, PathMatch]:
     worker_run_dir = os.getcwd()
-    s3_out_uris = {}
+    worker_out_path_matches = {}
     for out_key in outs:
-        try:
-            s3_uri = get_nested_value(container, out_key)
-            if not isinstance(s3_uri, str) or not s3_uri.startswith("s3://"):
-                continue
-        except (KeyError, AttributeError):
-            continue
+        remote_path_data = out_path_matches[out_key].remote
 
-        s3_out_uris[out_key] = s3_uri
-        basename = os.path.basename(s3_uri.rstrip("/"))
+        basename = os.path.basename(remote_path_data.path.rstrip("/"))
         local_worker_path = os.path.join(worker_run_dir, "outs", basename)
+        local_path_data = PathData(
+            path=local_worker_path,
+            location="local",
+            is_dir=remote_path_data.is_dir,
+        )
 
-        logger.info(f"[Worker] Mapping output: {s3_uri} -> {local_worker_path}")
-        set_nested_value(container, out_key, local_worker_path)
-    return s3_out_uris
+        logger.info(
+            f"[Worker] Mapping output: {remote_path_data.path} -> {local_path_data.path}"
+        )
+        set_nested_value(container, out_key, local_path_data.path)
+        worker_out_path_matches[out_key] = PathMatch(
+            local=local_path_data, remote=remote_path_data
+        )
+    return worker_out_path_matches
 
 
-def _worker_upload_outputs(container: Any, s3_out_uris: dict):
-    for out_key, s3_uri in s3_out_uris.items():
-        try:
-            local_path = get_nested_value(container, out_key)
-        except (KeyError, AttributeError):
-            continue
+def _worker_upload_outputs(outs: list[str], worker_out_path_matches: dict):
+    for out_key in outs:
+        local_path_data = worker_out_path_matches[out_key].local
+        remote_path_data = worker_out_path_matches[out_key].remote
 
-        if os.path.exists(local_path):
-            out_hash = calculate_path_hash(local_path)
-            remote_hash = get_s3_hash(s3_uri)
+        if os.path.exists(local_path_data.path):
+            local_path_data.hash = calculate_path_hash(local_path_data.path)
+            remote_path_data.hash = get_s3_hash(remote_path_data.path)
 
-            if out_hash == remote_hash:
+            if local_path_data.hash == remote_path_data.hash:
                 logger.info(
                     f"[Worker] Output '{out_key}' matches remote S3 hash. Skipping upload."
                 )
             else:
                 logger.info(f"[Worker] Uploading output '{out_key}' to S3...")
-                s3_sync(local_path, s3_uri)
-                upload_hash(s3_uri, out_hash)
+                local_path_data.is_dir = os.path.isdir(local_path_data.path)
+                remote_path_data.is_dir = local_path_data.is_dir
+                s3_sync(local_path_data, remote_path_data)
+                upload_hash(remote_path_data.path, local_path_data.hash)
+                remote_path_data.hash = get_s3_hash(remote_path_data.path)
         else:
-            logger.warning(
-                f"[Worker] Output '{out_key}' not found at {local_path} after execution."
+            raise FileNotFoundError(
+                f"[Worker] Output '{out_key}' not found at {local_path_data.path} after execution."
             )
+    return worker_out_path_matches
 
 
 def worker_wrapper(
-    func: Callable, args: tuple, kwargs: dict, deps: list[str], outs: list[str]
+    func: Callable,
+    args: tuple,
+    kwargs: dict,
+    deps: list[str],
+    outs: list[str],
+    dep_path_matches: dict,
+    out_path_matches: dict,
 ) -> Any:
     """Runs standard function on Ray worker."""
-    _worker_process_inputs(kwargs, deps)
-    s3_out_uris = _worker_process_outputs(kwargs, outs)
+    _worker_process_inputs(kwargs, deps, dep_path_matches)
+    worker_out_path_matches = _worker_process_outputs(kwargs, outs, out_path_matches)
 
     logger.info(f"[Worker] Starting execution of '{func.__name__}'...")
     logger.info(f"[Worker] Function arguments: args={args}, kwargs={kwargs}")
     result = func(*args, **kwargs)
     logger.info(f"[Worker] Execution of '{func.__name__}' completed.")
 
-    _worker_upload_outputs(kwargs, s3_out_uris)
-    return result
+    worker_out_path_matches = _worker_upload_outputs(outs, worker_out_path_matches)
+    logger.info(f"[Worker] Remote output paths: {worker_out_path_matches}")
+    return result, worker_out_path_matches

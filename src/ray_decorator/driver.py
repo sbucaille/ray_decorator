@@ -1,9 +1,11 @@
 import hashlib
 import os
 from importlib import metadata
-from typing import Any
+from typing import Any, Dict
 
 from .utils import (
+    PathData,
+    PathMatch,
     calculate_path_hash,
     get_nested_value,
     get_s3_hash,
@@ -67,70 +69,83 @@ def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
         )
 
 
-def _driver_process_inputs(container: Any, deps: list[str], s3_base_path: str) -> str:
-    combined_hash = hashlib.md5()
-    for dep_key in deps:
-        try:
-            val = get_nested_value(container, dep_key)
-            if val:
-                combined_hash.update(calculate_path_hash(str(val)).encode())
-        except (KeyError, AttributeError):
-            continue
-
-    run_id = combined_hash.hexdigest()
-    s3_base = f"{s3_base_path.rstrip('/')}/{run_id}"
-    logger.info(f"[Driver] Using stable Run ID: {run_id}")
-
+def _driver_process_inputs(
+    container: Any, deps: list[str], s3_base_path: str
+) -> Dict[str, PathMatch]:
+    matches = {}
     for dep_key in deps:
         try:
             local_path = str(get_nested_value(container, dep_key))
         except (KeyError, AttributeError):
             continue
 
-        s3_uri = f"{s3_base}/deps/{os.path.basename(local_path.rstrip('/'))}"
-        logger.info(f"[Driver] Mapping input: {local_path} -> {s3_uri}")
-
-        local_hash = calculate_path_hash(local_path)
-        remote_hash = get_s3_hash(s3_uri)
-
-        if local_hash and local_hash == remote_hash:
-            logger.info(
-                f"[Driver] Input '{dep_key}' matches remote S3 hash. Skipping upload."
+        if os.path.exists(local_path):
+            is_dir = os.path.isdir(local_path)
+            local_path_data = PathData(path=local_path, is_dir=is_dir, location="local")
+            remote_path_data = PathData(
+                path=f"{s3_base_path}/deps/{os.path.basename(local_path_data.path.rstrip('/'))}",
+                is_dir=is_dir,
+                location="s3",
             )
+
+            logger.info(
+                f"[Driver] Mapping input: {local_path_data.path} -> {remote_path_data.path}"
+            )
+
+            local_path_data.hash = calculate_path_hash(local_path_data.path)
+            remote_path_data.hash = get_s3_hash(remote_path_data.path)
+
+            if local_path_data.hash and local_path_data.hash == remote_path_data.hash:
+                logger.info(
+                    f"[Driver] Input '{dep_key}' matches remote S3 hash. Skipping upload."
+                )
+            else:
+                logger.info(f"[Driver] Uploading input '{dep_key}' to S3...")
+                s3_sync(local_path_data, remote_path_data)
+                upload_hash(remote_path_data.path, remote_path_data.hash)
+
+            set_nested_value(container, dep_key, remote_path_data.path)
+            path_match = PathMatch(local_path_data, remote_path_data)
+            matches[dep_key] = path_match
         else:
-            logger.info(f"[Driver] Uploading input '{dep_key}' to S3...")
-            s3_sync(local_path, s3_uri)
-            upload_hash(s3_uri, local_hash)
-
-        set_nested_value(container, dep_key, s3_uri)
-    return s3_base
+            raise FileNotFoundError(
+                f"[Driver] Input '{dep_key}' not found at {local_path}."
+            )
+    return matches
 
 
-def _driver_process_outputs(container: Any, outs: list[str], s3_base: str) -> dict:
-    original_local_outs = {}
+def _driver_process_outputs(
+    container: Any, outs: list[str], s3_base_path: str
+) -> Dict[str, PathMatch]:
+    matches = {}
     for out_key in outs:
         try:
             local_path = str(get_nested_value(container, out_key))
         except (KeyError, AttributeError):
             continue
+        local_path_data = PathData(path=local_path, is_dir=None, location="local")
+        s3_uri = f"{s3_base_path}/outs/{os.path.basename(local_path.rstrip('/'))}"
+        remote_path_data = PathData(path=s3_uri, is_dir=None, location="s3")
 
-        original_local_outs[out_key] = local_path
-        s3_uri = f"{s3_base}/outs/{os.path.basename(local_path.rstrip('/'))}"
+        logger.info(
+            f"[Driver] Mapping output: {local_path_data.path} -> {remote_path_data.path}"
+        )
+        set_nested_value(container, out_key, remote_path_data.path)
+        path_match = PathMatch(local_path_data, remote_path_data)
+        matches[out_key] = path_match
+    return matches
 
-        logger.info(f"[Driver] Mapping output: {local_path} -> {s3_uri}")
-        set_nested_value(container, out_key, s3_uri)
-    return original_local_outs
 
+def _driver_retrieve_outputs(
+    out_local_matches: Dict[str, PathMatch],
+    remote_out_local_paths: Dict[str, PathMatch],
+):
+    for out_key in out_local_matches.keys():
+        local_path_data = out_local_matches[out_key].local
+        remote_path_data = remote_out_local_paths[out_key].remote
 
-def _driver_retrieve_outputs(container: Any, original_local_outs: dict):
-    for out_key, local_path in original_local_outs.items():
-        try:
-            s3_uri = get_nested_value(container, out_key)
-        except (KeyError, AttributeError):
-            continue
-
-        remote_hash = get_s3_hash(s3_uri)
-        local_hash = calculate_path_hash(local_path)
+        remote_hash = get_s3_hash(remote_path_data.path)
+        local_hash = calculate_path_hash(local_path_data.path)
 
         if remote_hash and remote_hash == local_hash:
             logger.info(
@@ -138,4 +153,7 @@ def _driver_retrieve_outputs(container: Any, original_local_outs: dict):
             )
         else:
             logger.info(f"[Driver] Downloading output '{out_key}' from S3...")
-            s3_sync(s3_uri, local_path)
+            logger.info(f"[Driver] Remote path: {remote_path_data.path}")
+            logger.info(f"[Driver] Local path: {local_path_data.path}")
+            local_path_data.is_dir = remote_path_data.is_dir
+            s3_sync(remote_path_data, local_path_data)

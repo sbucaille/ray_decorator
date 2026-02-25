@@ -1,5 +1,5 @@
 import os
-from typing import Any, Callable
+from typing import Any, Callable, Dict
 
 from omegaconf import OmegaConf
 
@@ -9,7 +9,7 @@ from .driver import (
     _driver_retrieve_outputs,
     _setup_ray_cluster,
 )
-from .utils import logger
+from .utils import get_s3_base_path, logger
 from .worker import (
     _worker_process_inputs,
     _worker_process_outputs,
@@ -22,11 +22,18 @@ except ImportError:
     _BaseZen = object
 
 
-def ray_zen_worker(zen_inst: "RayZen", cfg: Any) -> Any:
+def ray_zen_worker(
+    zen_inst: "RayZen",
+    cfg: Any,
+    dep_path_matches: dict,
+    out_path_matches: dict,
+) -> Any:
     """Runs hydra-zen Zen.__call__ on Ray worker."""
 
-    _worker_process_inputs(cfg, zen_inst.deps)
-    s3_out_uris = _worker_process_outputs(cfg, zen_inst.outs)
+    _worker_process_inputs(cfg, zen_inst.deps, dep_path_matches)
+    worker_out_path_matches = _worker_process_outputs(
+        cfg, zen_inst.outs, out_path_matches
+    )
 
     logger.info(f"[Worker] Starting execution of factory '{zen_inst.func.__name__}'...")
     cfg = OmegaConf.create(cfg)
@@ -34,8 +41,10 @@ def ray_zen_worker(zen_inst: "RayZen", cfg: Any) -> Any:
     result = super(RayZen, zen_inst).__call__(cfg)
     logger.info(f"[Worker] Factory execution completed.")
 
-    _worker_upload_outputs(cfg, s3_out_uris)
-    return result
+    worker_out_path_matches = _worker_upload_outputs(
+        zen_inst.outs, worker_out_path_matches
+    )
+    return result, worker_out_path_matches
 
 
 class RayZen(_BaseZen):
@@ -88,8 +97,13 @@ class RayZen(_BaseZen):
         if not final_ray_address or not final_s3_base_path:
             raise ValueError("Ray address and S3 base path must be provided.")
 
-        s3_base = _driver_process_inputs(cfg_copy, self.deps, final_s3_base_path)
-        original_local_outs = _driver_process_outputs(cfg_copy, self.outs, s3_base)
+        final_s3_base_path = get_s3_base_path(final_s3_base_path, self.deps, cfg_copy)
+        dep_path_matches = _driver_process_inputs(
+            cfg_copy, self.deps, final_s3_base_path
+        )
+        out_path_matches = _driver_process_outputs(
+            cfg_copy, self.outs, final_s3_base_path
+        )
 
         _setup_ray_cluster(final_ray_address, self.ray_init_kwargs)
 
@@ -97,10 +111,12 @@ class RayZen(_BaseZen):
         remote_wrapper = ray.remote(ray_zen_worker).options(
             **(self.ray_remote_kwargs or {})
         )
-        result = ray.get(remote_wrapper.remote(self, cfg_copy))
+        result, worker_out_path_matches = ray.get(
+            remote_wrapper.remote(self, cfg_copy, dep_path_matches, out_path_matches)
+        )
         logger.info(f"[Driver] Remote execution completed.")
 
-        _driver_retrieve_outputs(cfg_copy, original_local_outs)
+        _driver_retrieve_outputs(out_path_matches, worker_out_path_matches)
         return result
 
 

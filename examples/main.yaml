@@ -1,6 +1,6 @@
 
 data_module:
-  data_dir: ./examples/data
+  data_dir: ./examples/data_dir
 
 model:
   _target_: "transformers.AutoModel.from_pretrained"
