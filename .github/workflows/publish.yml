@@ -2,8 +2,8 @@ name: Publish to PyPI
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 jobs:
   publish:
@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -25,5 +26,21 @@ jobs:
       - name: Build package
         run: uv build
 
+      - name: Check if version is already tagged
+        id: check_tag
+        run: |
+          VERSION=$(grep -m 1 "^version =" pyproject.toml | cut -d '"' -f 2)
+          TAG="v$VERSION"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Skipping tagging and publishing."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tagging with $TAG"
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish package
+        if: steps.check_tag.outputs.exists == 'false'
         run: uv publish
