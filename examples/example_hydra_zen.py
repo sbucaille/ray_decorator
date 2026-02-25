@@ -10,13 +10,16 @@ from transformers import AutoModel, PreTrainedModel
     name="main",
     data_module={"data_dir": "./examples/data"},
     model=builds(
-        AutoModel.from_pretrained, pretrained_model_name_or_path="bert-base-uncased"
+        AutoModel.from_pretrained,
+        pretrained_model_name_or_path="bert-base-uncased",
+        device_map="auto",
     ),
     output_dir="./examples/outputs",
 )
 def main(data_module: Dict[str, Any], model: PreTrainedModel, output_dir: str) -> None:
     print(data_module)
     model.save_pretrained(output_dir)
+    print(model.device)
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "data.json"), "w") as f:
         json.dump(data_module, f)
@@ -33,4 +36,11 @@ if __name__ == "__main__":
         outs=["output_dir"],
         ray_address="auto",
         s3_base_path="s3://lassonde",
+        ray_init_kwargs={
+            "runtime_env": {
+                "working_dir": os.getcwd(),
+                "py_modules": ["./src"],
+            }
+        },
+        ray_remote_kwargs={"resources": {"a4000": 1}},
     ).hydra_main(config_name="main", config_path=None, version_base=None)

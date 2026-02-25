@@ -49,7 +49,8 @@ class RayZen(_BaseZen):
         *args,
         ray_address=None,
         s3_base_path=None,
-        working_dir=None,
+        ray_init_kwargs=None,
+        ray_remote_kwargs=None,
         deps=None,
         outs=None,
         **kwargs,
@@ -59,7 +60,8 @@ class RayZen(_BaseZen):
         super().__init__(func, *args, **kwargs)
         self.ray_address = ray_address
         self.s3_base_path = s3_base_path
-        self.working_dir = working_dir
+        self.ray_init_kwargs = ray_init_kwargs
+        self.ray_remote_kwargs = ray_remote_kwargs
         self.deps = deps or []
         self.outs = outs or []
         import functools
@@ -89,10 +91,12 @@ class RayZen(_BaseZen):
         s3_base = _driver_process_inputs(cfg_copy, self.deps, final_s3_base_path)
         original_local_outs = _driver_process_outputs(cfg_copy, self.outs, s3_base)
 
-        _setup_ray_cluster(final_ray_address, self.working_dir)
+        _setup_ray_cluster(final_ray_address, self.ray_init_kwargs)
 
         logger.info(f"[Driver] Submitting factory '{self.func.__name__}' to Ray...")
-        remote_wrapper = ray.remote(ray_zen_worker)
+        remote_wrapper = ray.remote(ray_zen_worker).options(
+            **(self.ray_remote_kwargs or {})
+        )
         result = ray.get(remote_wrapper.remote(self, cfg_copy))
         logger.info(f"[Driver] Remote execution completed.")
 
@@ -105,7 +109,8 @@ def ray_zen(
     *,
     ray_address: str | None = None,
     s3_base_path: str | None = None,
-    working_dir: str | Any | None = None,
+    ray_init_kwargs: dict | None = None,
+    ray_remote_kwargs: dict | None = None,
     deps: list[str] | None = None,
     outs: list[str] | None = None,
     **kwargs,
@@ -117,7 +122,8 @@ def ray_zen(
         __func,
         ray_address=ray_address,
         s3_base_path=s3_base_path,
-        working_dir=working_dir,
+        ray_init_kwargs=ray_init_kwargs,
+        ray_remote_kwargs=ray_remote_kwargs,
         deps=deps,
         outs=outs,
         **kwargs,

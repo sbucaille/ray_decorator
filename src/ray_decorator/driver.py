@@ -14,9 +14,7 @@ from .utils import (
 )
 
 
-def _setup_ray_cluster(
-    ray_address: str, working_dir: Any, env_vars: dict | None = None
-):
+def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
     import ray
     from ray.runtime_env import RuntimeEnv
 
@@ -36,18 +34,32 @@ def _setup_ray_cluster(
             for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
             if k in os.environ
         }
-        if env_vars:
-            default_env.update(env_vars)
 
-        ray.init(
-            address=ray_address,
-            runtime_env=RuntimeEnv(
-                working_dir=working_dir,
-                uv={"packages": pkgs},
-                py_modules=["./src/ray_decorator"],
-                env_vars=default_env,
-            ),
-        )
+        # Handle ray_init_kwargs
+        init_kwargs = (ray_init_kwargs or {}).copy()
+
+        # Extract runtime_env as a dict if possible for easier merging
+        runtime_env = init_kwargs.pop("runtime_env", {})
+        if not isinstance(runtime_env, dict):
+            # If it's already a RuntimeEnv object, convert to dict if possible
+            if hasattr(runtime_env, "to_dict"):
+                runtime_env = runtime_env.to_dict()
+            else:
+                # Fallback or assume it's already dict-like or we just treat as empty and warn?
+                # For safety, let's try to keep it as is if we can't convert, but the merging logic below assumes a dict.
+                runtime_env = {}
+
+        # Merge env_vars
+        current_env = runtime_env.get("env_vars", {})
+        merged_env = default_env.copy()
+        merged_env.update(current_env)
+        runtime_env["env_vars"] = merged_env
+
+        # Ensure uv packages are included if not already specified
+        if "uv" not in runtime_env:
+            runtime_env["uv"] = {"packages": pkgs}
+
+        ray.init(address=ray_address, runtime_env=runtime_env, **init_kwargs)
 
     if "RAY_RUNTIME_ENV_HOOK" not in os.environ:
         os.environ["RAY_RUNTIME_ENV_HOOK"] = (

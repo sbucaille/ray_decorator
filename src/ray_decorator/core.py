@@ -18,7 +18,8 @@ def ray_decorator(
     outs: list[str],
     ray_address: str | None = None,
     s3_base_path: str | None = None,
-    working_dir: str | Any | None = None,
+    ray_init_kwargs: dict | None = None,
+    ray_remote_kwargs: dict | None = None,
 ) -> Callable:
     """
     Standard decorator to offload execution to Ray.
@@ -46,11 +47,13 @@ def ray_decorator(
             s3_base = _driver_process_inputs(bound_kwargs, deps, final_s3_base_path)
             original_local_outs = _driver_process_outputs(bound_kwargs, outs, s3_base)
 
-            _setup_ray_cluster(final_ray_address, working_dir)
+            _setup_ray_cluster(final_ray_address, ray_init_kwargs)
 
             logger.info(f"[Driver] Submitting '{func.__name__}' to Ray cluster...")
             logger.info(f"[Driver] Bound args: {bound.args}, kwargs: {bound_kwargs}")
-            remote_wrapper = ray.remote(worker_wrapper)
+            remote_wrapper = ray.remote(worker_wrapper).options(
+                **(ray_remote_kwargs or {})
+            )
             # Positional args are not provided because they are handled in kwargs already
             result = ray.get(remote_wrapper.remote(func, (), bound_kwargs, deps, outs))
             logger.info(f"[Driver] Remote execution completed.")

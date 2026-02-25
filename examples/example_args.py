@@ -9,7 +9,9 @@ from ray_decorator import ray_decorator
     outs=["output_dir"],
     ray_address="auto",
     s3_base_path="s3://lassonde",
-    working_dir=os.getcwd(),
+    ray_init_kwargs={
+        "runtime_env": {"working_dir": os.getcwd(), "py_modules": ["./src"]}
+    },
 )
 def main(data_dir: str, output_dir: str) -> None:
     print(data_dir)

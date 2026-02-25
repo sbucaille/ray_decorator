@@ -13,6 +13,10 @@ from ray_decorator import ray_decorator
     outs=["config.output_dir"],
     ray_address="auto",
     s3_base_path="s3://lassonde",
+    ray_init_kwargs={
+        "runtime_env": {"working_dir": os.getcwd(), "py_modules": ["./src"]}
+    },
+    ray_remote_kwargs={"num_cpus": 2},
 )
 def main(config: DictConfig) -> None:
     model = hydra.utils.instantiate(config.model)
