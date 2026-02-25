@@ -1,12 +1,12 @@
 [project]
 name = "ray-decorator"
-version = "0.1.6"
+version = "0.1.7"
 description = "Decorator to run functions on Ray cluster with S3 mapping between local and remote workers paths"
 readme = "README.md"
 authors = [
     { name = "Steven Bucaille", email = "steven.bucaille@osedea.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = []
 
 [build-system]
