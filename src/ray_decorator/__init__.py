@@ -192,8 +192,8 @@ def worker_wrapper(
 
     # 3. Run the actual function
     logger.info(f"[Worker] Starting execution of '{func.__name__}'...")
-    logger.info(f"[Worker] Function arguments: {args}, {kwargs}")
-    result = func(*args, **kwargs)
+    logger.info(f"[Worker] Function arguments: {kwargs}")
+    result = func(**kwargs)
     logger.info(f"[Worker] Execution of '{func.__name__}' completed.")
 
     # 4. Process Outputs (Worker Local -> S3)
@@ -227,6 +227,7 @@ def ray_decorator(
     outs: list[str],
     ray_address: str | None = None,
     s3_base_path: str | None = None,
+    working_dir: str | Any | None = None,
 ) -> Callable:
     """
     Decorator to offload execution to Ray with symmetric S3 sync and MD5 deduplication.
@@ -238,6 +239,7 @@ def ray_decorator(
                      Defaults to RAY_ADDRESS env var.
         s3_base_path: S3 path for intermediate storage (e.g. 's3://my-bucket/jobs').
                       Defaults to RAY_S3_BASE_PATH env var.
+        working_dir: Local directory to sync to workers. Use "." for current project.
     """
 
     def decorator(func: Callable) -> Callable:
@@ -325,9 +327,11 @@ def ray_decorator(
                 logger.info(
                     f"[Driver] Initializing Ray at {final_ray_address} with {len(pkgs)} packages..."
                 )
+                ray.shutdown()
                 ray.init(
                     address=final_ray_address,
                     runtime_env=RuntimeEnv(
+                        working_dir=working_dir,
                         uv={"packages": pkgs},
                         env_vars={
                             k: os.environ.get(k)
@@ -343,9 +347,13 @@ def ray_decorator(
                 )
 
             logger.info(f"[Driver] Submitting '{func.__name__}' to Ray cluster...")
+            logger.info(f"[Driver] Bound args: {bound.args}")
+            logger.info(f"[Driver] Bound kwargs: {bound_kwargs}")
+            logger.info(f"[Driver] Deps: {deps}")
+            logger.info(f"[Driver] Outs: {outs}")
             remote_wrapper = ray.remote(worker_wrapper)
             result = ray.get(
-                remote_wrapper.remote(func, bound.args, bound_kwargs, deps, outs)
+                remote_wrapper.remote(func, (), bound_kwargs, deps, outs)
             )
             logger.info(f"[Driver] Remote execution completed.")
 
