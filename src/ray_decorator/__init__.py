@@ -320,6 +320,7 @@ def ray_decorator(
                 pkgs = [
                     f"{d.metadata['Name']}=={d.version}"
                     for d in metadata.distributions()
+                    if d.metadata["Name"] != "ray-decorator"
                 ]
                 logger.info(
                     f"[Driver] Initializing Ray at {final_ray_address} with {len(pkgs)} packages..."
