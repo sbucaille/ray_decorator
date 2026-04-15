@@ -103,8 +103,8 @@ def worker_wrapper(
     kwargs: dict,
     deps: list[str],
     outs: list[str],
-    dep_path_matches: dict,
-    out_path_matches: dict,
+    dep_path_matches: Dict[str, PathMatch],
+    out_path_matches: Dict[str, PathMatch],
 ) -> Any:
     """Runs standard function on Ray worker."""
     _worker_process_inputs(kwargs, deps, dep_path_matches)

@@ -18,7 +18,6 @@ from .utils import (
 
 def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
     import ray
-    from ray.runtime_env import RuntimeEnv
 
     if not ray.is_initialized():
         pkgs = [
@@ -57,11 +56,33 @@ def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
         merged_env.update(current_env)
         runtime_env["env_vars"] = merged_env
 
-        # Ensure uv packages are included if not already specified
-        if "uv" not in runtime_env:
-            runtime_env["uv"] = {"packages": pkgs}
+        is_uv_run = "UV_RUN_RECURSION_DEPTH" in os.environ
 
-        ray.init(address=ray_address, runtime_env=runtime_env, **init_kwargs)
+        if is_uv_run:
+            incompatible_keys = [k for k in ("uv", "pip") if k in runtime_env]
+            if incompatible_keys:
+                logger.warning(
+                    "[Driver] Running under `uv run`; removing incompatible "
+                    f"runtime_env keys: {', '.join(incompatible_keys)}."
+                )
+                for key in incompatible_keys:
+                    runtime_env.pop(key, None)
+        else:
+            # Ensure uv packages are included when we are not already in `uv run`.
+            if "uv" not in runtime_env and "pip" not in runtime_env:
+                runtime_env["uv"] = {"packages": pkgs}
+
+        try:
+            ray.init(address=ray_address, runtime_env=runtime_env, **init_kwargs)
+        except ConnectionError:
+            if ray_address == "auto":
+                logger.warning(
+                    "[Driver] No running Ray instance found for address='auto'. "
+                    "Starting a local Ray instance instead."
+                )
+                ray.init(runtime_env=runtime_env, **init_kwargs)
+            else:
+                raise
 
     if "RAY_RUNTIME_ENV_HOOK" not in os.environ:
         os.environ["RAY_RUNTIME_ENV_HOOK"] = (
