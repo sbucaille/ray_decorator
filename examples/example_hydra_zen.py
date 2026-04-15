@@ -41,7 +41,7 @@ if __name__ == "__main__":
         deps=["data_module.data_dir"],
         outs=["output_dir", "output_json_path"],
         ray_address="auto",
-        s3_base_path="s3://lassonde",
+        s3_base_path="s3://amazon-s3-ray-test-bucket",
         ray_init_kwargs={
             "runtime_env": {
                 "working_dir": os.getcwd(),
