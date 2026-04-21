@@ -14,6 +14,46 @@ from .utils import (
 )
 
 
+def _distribution_version(dist_name: str) -> str | None:
+    try:
+        return metadata.version(dist_name)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _ensure_ray_decorator_worker_import(runtime_env: dict, *, is_uv_run: bool) -> None:
+    """Workers must import ``ray_decorator.worker``; it is not in Ray's working_dir zip.
+
+    When the driver runs under ``uv run``, we avoid pushing the whole local venv via
+    ``runtime_env["uv"]`` (nested uv / recursion). Without an explicit install, Ray
+    workers then raise ``ModuleNotFoundError: ray_decorator``.
+    """
+    if not is_uv_run:
+        return
+    version = _distribution_version("ray-decorator")
+    if not version:
+        return
+    pin = f"ray-decorator=={version}"
+
+    pip_spec = runtime_env.get("pip")
+    if pip_spec is None:
+        runtime_env["pip"] = [pin]
+        logger.debug(
+            "[Local] runtime_env: added pip %s for workers (uv run driver)",
+            pin,
+        )
+        return
+
+    if isinstance(pip_spec, list):
+        if any(p == pin or str(p).startswith("ray-decorator") for p in pip_spec):
+            return
+        runtime_env["pip"] = [*pip_spec, pin]
+        logger.debug(
+            "[Local] runtime_env: appended pip %s for workers (uv run driver)",
+            pin,
+        )
+
+
 def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
     import ray
 
@@ -64,6 +104,8 @@ def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
             # Ensure uv packages are included when we are not already in `uv run`.
             if "uv" not in runtime_env and "pip" not in runtime_env:
                 runtime_env["uv"] = {"packages": pkgs}
+
+        _ensure_ray_decorator_worker_import(runtime_env, is_uv_run=is_uv_run)
 
         try:
             ray.init(address=ray_address, runtime_env=runtime_env, **init_kwargs)
