@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "pyproject.toml"
 
 jobs:
   publish:
@@ -14,33 +16,75 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect version bump
+        id: version_bump
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          py_version() {
+            python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('$1').read_text(encoding='utf-8'))['project']['version'])"
+          }
+
+          NEW=$(py_version pyproject.toml)
+
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || [ -z "$BEFORE" ]; then
+            echo "No prior commit on ref; assuming version bump for new history."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git show "${BEFORE}:pyproject.toml" > /tmp/old.toml 2>/dev/null; then
+            echo "Could not read pyproject.toml at before SHA; treating as version change."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          OLD=$(python -c "import tomllib; print(tomllib.loads(open('/tmp/old.toml', encoding='utf-8').read())['project']['version'])")
+
+          if [ "$OLD" != "$NEW" ]; then
+            echo "Version changed: $OLD -> $NEW"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          else
+            echo "project.version unchanged ($NEW); skipping build and publish."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install uv
+        if: steps.version_bump.outputs.changed == 'true'
         uses: astral-sh/setup-uv@v5
         with:
           version: "latest"
 
       - name: Set up Python
+        if: steps.version_bump.outputs.changed == 'true'
         run: uv python install
 
       - name: Build package
+        if: steps.version_bump.outputs.changed == 'true'
         run: uv build
 
       - name: Check if version is already tagged
         id: check_tag
+        if: steps.version_bump.outputs.changed == 'true'
         run: |
-          VERSION=$(grep -m 1 "^version =" pyproject.toml | cut -d '"' -f 2)
+          VERSION="${{ steps.version_bump.outputs.version }}"
           TAG="v$VERSION"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "Tag $TAG already exists. Skipping tagging and publishing."
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "Tagging with $TAG"
             git tag "$TAG"
             git push origin "$TAG"
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Publish package
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.version_bump.outputs.changed == 'true' && steps.check_tag.outputs.exists == 'false'
         run: uv publish
