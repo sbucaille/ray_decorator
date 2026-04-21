@@ -48,6 +48,36 @@ def is_aws_available() -> bool:
     return shutil.which("aws") is not None
 
 
+def is_hydra_available() -> bool:
+    """Checks if the 'hydra' package is installed."""
+    try:
+        import hydra  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def is_omegaconf_available() -> bool:
+    """Checks if the 'omegaconf' package is installed."""
+    try:
+        import omegaconf  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def is_hydra_zen_available() -> bool:
+    """Checks if the 'hydra-zen' package is installed."""
+    try:
+        import hydra_zen  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def get_nested_value(container: Any, path: str) -> Any:
     """Retrieves a nested value from dot-separated path in a dict or DictConfig."""
     keys = path.split(".")

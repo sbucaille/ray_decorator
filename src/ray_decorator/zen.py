@@ -1,8 +1,6 @@
 import os
 from typing import Any, Callable
 
-from omegaconf import OmegaConf
-
 from .driver import (
     _driver_process_inputs,
     _driver_process_outputs,
@@ -11,15 +9,17 @@ from .driver import (
 )
 from .logging import logger
 from .s3 import get_s3_base_path
+from .utils import is_hydra_zen_available
 from .worker import (
     _worker_process_inputs,
     _worker_process_outputs,
     _worker_upload_outputs,
 )
 
-try:
+if is_hydra_zen_available():
     from hydra_zen.wrapper import Zen as _BaseZen
-except ImportError:
+    from omegaconf import OmegaConf
+else:
     _BaseZen = object
 
 
@@ -65,7 +65,7 @@ class RayZen(_BaseZen):
         outs=None,
         **kwargs,
     ):
-        if _BaseZen is object:
+        if not is_hydra_zen_available():
             raise ImportError("The 'hydra-zen' package is required to use ray_zen.")
         super().__init__(func, *args, **kwargs)
         self.ray_address = ray_address
