@@ -1,5 +1,5 @@
 import os
-from typing import Any, Callable, Dict
+from typing import Any, Callable
 
 from omegaconf import OmegaConf
 
@@ -9,7 +9,8 @@ from .driver import (
     _driver_retrieve_outputs,
     _setup_ray_cluster,
 )
-from .utils import get_s3_base_path, logger
+from .logging import logger
+from .s3 import get_s3_base_path
 from .worker import (
     _worker_process_inputs,
     _worker_process_outputs,
@@ -35,11 +36,11 @@ def ray_zen_worker(
         cfg, zen_inst.outs, out_path_matches
     )
 
-    logger.info(f"[Worker] Starting execution of factory '{zen_inst.func.__name__}'...")
+    logger.worker_execution_start(zen_inst.func.__name__)
     cfg = OmegaConf.create(cfg)
     # Bypass RayZen.__call__ overrides and run the standard hydra-zen logic
     result = super(RayZen, zen_inst).__call__(cfg)
-    logger.info(f"[Worker] Factory execution completed.")
+    logger.log_worker_function_execution_complete(zen_inst.func.__name__)
 
     worker_out_path_matches = _worker_upload_outputs(
         zen_inst.outs, worker_out_path_matches
@@ -107,14 +108,17 @@ class RayZen(_BaseZen):
 
         _setup_ray_cluster(final_ray_address, self.ray_init_kwargs)
 
-        logger.info(f"[Driver] Submitting factory '{self.func.__name__}' to Ray...")
+        logger.log_submit_factory(self.func.__name__)
         remote_wrapper = ray.remote(ray_zen_worker).options(
             **(self.ray_remote_kwargs or {})
         )
-        result, worker_out_path_matches = ray.get(
-            remote_wrapper.remote(self, cfg_copy, dep_path_matches, out_path_matches)
-        )
-        logger.info(f"[Driver] Remote execution completed.")
+        with logger.status_driver_waiting_remote_execution(self.func.__name__):
+            result, worker_out_path_matches = ray.get(
+                remote_wrapper.remote(
+                    self, cfg_copy, dep_path_matches, out_path_matches
+                )
+            )
+        logger.remote_execution_completed("Local")
 
         _driver_retrieve_outputs(out_path_matches, worker_out_path_matches)
         return result
