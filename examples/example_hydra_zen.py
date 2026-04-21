@@ -48,5 +48,4 @@ if __name__ == "__main__":
                 "py_modules": ["./src/ray_decorator"],
             }
         },
-        ray_remote_kwargs={"resources": {"a4000": 1}, "num_gpus": 1},
     ).hydra_main(config_name="main", config_path=None, version_base=None)
