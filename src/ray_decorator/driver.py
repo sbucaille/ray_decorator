@@ -39,8 +39,7 @@ def _ensure_ray_decorator_worker_import(runtime_env: dict, *, is_uv_run: bool) -
     if pip_spec is None:
         runtime_env["pip"] = [pin]
         logger.debug(
-            "[Local] runtime_env: added pip %s for workers (uv run driver)",
-            pin,
+            f"[Local] runtime_env: added pip {pin} for workers (uv run driver)"
         )
         return
 
