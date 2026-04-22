@@ -61,8 +61,9 @@ def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
                     runtime_env.pop(key, None)
 
         # Working dir packaging excludes `.venv`; workers need the same distributions
-        # as the driver (torch, ray-decorator, etc.). Apply under plain Python and `uv run`.
-        if "uv" not in runtime_env and "pip" not in runtime_env:
+        # as the driver (torch, ray-decorator, etc.). Do not inject uv/pip under
+        # `uv run`: Ray treats that combination as incompatible.
+        if not is_uv_run and "uv" not in runtime_env and "pip" not in runtime_env:
             runtime_env["uv"] = {"packages": pkgs}
 
         try:

@@ -1,13 +1,16 @@
 [project]
 name = "ray-decorator"
-version = "0.1.15"
+version = "0.1.16"
 description = "Decorator to run functions on Ray cluster with S3 mapping between local and remote workers paths"
 readme = "README.md"
 authors = [
     { name = "Steven Bucaille", email = "steven.bucaille@osedea.com" }
 ]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "ray[client]>=2.54.0",
+    "uv>=0.11.7",
+]
 
 [project.optional-dependencies]
 zen = ["hydra-zen>=0.16.0"]
@@ -20,7 +23,6 @@ build-backend = "uv_build"
 dev = [
     "accelerate>=1.12.0",
     "hydra-zen>=0.16.0",
-    "ray[client]>=2.54.0",
     "ruff>=0.11.13",
     "torch>=2.10.0",
     "transformers>=5.2.0",
