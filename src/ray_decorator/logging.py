@@ -77,6 +77,12 @@ class RayDecoratorLogger:
     def stable_run_id(self, run_id: str):
         self.info(f"[Local] Using stable Run ID: {run_id}")
 
+    def status_ray_initialization(self, ray_address: str, package_count: int):
+        return self.status(
+            f"Initializing Ray at {ray_address} with {package_count} packages...",
+            spinner="dots",
+        )
+
     def status_driver_input_mapping_upload(self) -> Status:
         return self.status(
             "[Local] Mapping and uploading inputs...", spinner="to_remote"

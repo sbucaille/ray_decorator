@@ -66,7 +66,8 @@ def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
             runtime_env["uv"] = {"packages": pkgs}
 
         try:
-            ray.init(address=ray_address, runtime_env=runtime_env, **init_kwargs)
+            with logger.status_ray_initialization(ray_address, len(pkgs)):
+                ray.init(address=ray_address, runtime_env=runtime_env, **init_kwargs)
         except ConnectionError:
             if ray_address == "auto":
                 logger.log_auto_address_fallback_to_local()
