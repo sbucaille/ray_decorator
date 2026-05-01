@@ -61,9 +61,15 @@ def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
                     runtime_env.pop(key, None)
 
         # Working dir packaging excludes `.venv`; workers need the same distributions
-        # as the driver (torch, ray-decorator, etc.). Do not inject uv/pip under
-        # `uv run`: Ray treats that combination as incompatible.
-        if not is_uv_run and "uv" not in runtime_env and "pip" not in runtime_env:
+        # as the driver (torch, ray-decorator, etc.).
+        #
+        # Under plain Python, mirror the venv on workers via `runtime_env["uv"]`.
+        # Under `uv run`, Ray conflicts if we inject that same `uv` block on the
+        # driver; install the pinned requirement set on workers with `pip` instead.
+        if is_uv_run:
+            if "pip" not in runtime_env and "uv" not in runtime_env:
+                runtime_env["pip"] = pkgs
+        elif "uv" not in runtime_env and "pip" not in runtime_env:
             runtime_env["uv"] = {"packages": pkgs}
 
         try:
