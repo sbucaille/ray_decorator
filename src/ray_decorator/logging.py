@@ -118,6 +118,17 @@ class RayDecoratorLogger:
             f"runtime_env keys: {joined_keys}."
         )
 
+    def log_skipped_local_distributions(self, names: Iterable[str]):
+        joined = "\n".join(f"  - {n}" for n in names)
+        self.warning(
+            "[Local] Skipping local / non-index distributions from "
+            "runtime_env pip/uv packages (they cannot be resolved from a "
+            f"public index):\n{joined}\n"
+            "Make sure they are reachable on the worker via runtime_env "
+            "`working_dir` / `py_modules`, a private index, or a custom "
+            "container image."
+        )
+
     def log_auto_address_fallback_to_local(self):
         self.warning(
             "[Local] No running Ray instance found for address='auto'. "

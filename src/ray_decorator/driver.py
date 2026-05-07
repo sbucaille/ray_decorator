@@ -1,3 +1,4 @@
+import json
 import os
 from importlib import metadata
 from typing import Any, Dict
@@ -13,15 +14,81 @@ from .utils import (
 )
 
 
+def _classify_dist_source(dist: metadata.Distribution) -> str | None:
+    """
+    Classifies a distribution's install source via PEP 610 ``direct_url.json``.
+
+    Returns one of ``"directory"``, ``"vcs"``, ``"archive"`` for non-index
+    installs, or ``None`` for regular index installs.
+    """
+    direct_url_text = dist.read_text("direct_url.json")
+    if not direct_url_text:
+        return None
+    try:
+        info = json.loads(direct_url_text)
+    except (ValueError, TypeError):
+        return None
+
+    if "dir_info" in info:
+        return "directory"
+    if "vcs_info" in info:
+        return "vcs"
+    if "archive_info" in info and str(info.get("url", "")).startswith("file://"):
+        return "archive"
+    return None
+
+
+def _collect_runtime_packages() -> tuple[list[str], list[str]]:
+    """
+    Inspects every installed distribution and classifies it via PEP 610
+    ``direct_url.json``:
+
+    - normal index installs are returned as ``name==version`` requirement strings
+    - directory installs (editable or not), VCS installs, and local archive
+      installs are dropped from the requirement list and reported as skipped
+
+    Skipped distributions are deliberately not bundled into Ray's runtime
+    environment; the caller is expected to make them reachable on workers via
+    ``working_dir`` / ``py_modules`` / a private index, as appropriate.
+
+    Returns a ``(pkgs, skipped)`` tuple.
+    """
+    excluded_names: set[str] = set()
+    skipped_messages: dict[str, str] = {}
+    pending_pkgs: dict[str, str] = {}
+
+    for dist in metadata.distributions():
+        name = dist.metadata["Name"]
+        version = dist.version
+        source_type = _classify_dist_source(dist)
+
+        if source_type is None:
+            # Only record if we have not already excluded this name from a
+            # sibling distribution earlier in the iteration order.
+            pending_pkgs.setdefault(name, f"{name}=={version}")
+            continue
+
+        excluded_names.add(name)
+        pending_pkgs.pop(name, None)
+        if source_type == "directory":
+            skipped_messages[name] = (
+                f"{name} (installed from a local directory; editable or path-based)"
+            )
+        elif source_type == "vcs":
+            skipped_messages[name] = f"{name} (installed from VCS)"
+        else:
+            skipped_messages[name] = f"{name} (installed from a local archive)"
+
+    pkgs = [spec for name, spec in pending_pkgs.items() if name not in excluded_names]
+    skipped = list(skipped_messages.values())
+    return pkgs, skipped
+
+
 def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
     import ray
 
     if not ray.is_initialized():
-        pkgs = [
-            f"{d.metadata['Name']}=={d.version}"
-            for d in metadata.distributions()
-            # if d.metadata["Name"] != "ray-decorator"
-        ]
+        pkgs, skipped = _collect_runtime_packages()
         logger.ray_initialization(ray_address, len(pkgs))
         ray.shutdown()
 
@@ -50,6 +117,9 @@ def _setup_ray_cluster(ray_address: str, ray_init_kwargs: dict | None = None):
         merged_env = default_env.copy()
         merged_env.update(current_env)
         runtime_env["env_vars"] = merged_env
+
+        if skipped:
+            logger.log_skipped_local_distributions(skipped)
 
         is_uv_run = "UV_RUN_RECURSION_DEPTH" in os.environ
 

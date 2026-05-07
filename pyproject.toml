@@ -1,6 +1,6 @@
 [project]
 name = "ray-decorator"
-version = "0.1.17"
+version = "0.1.18"
 description = "Decorator to run functions on Ray cluster with S3 mapping between local and remote workers paths"
 readme = "README.md"
 authors = [
@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "ray[client]>=2.54.0",
+    "tomli>=2.0.0 ; python_full_version < '3.11'",
     "uv>=0.11.7",
 ]
 
